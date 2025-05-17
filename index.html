@@ -3,77 +3,417 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>鄱阳湖水体动态监测系统</title>
+  <title>鄱阳湖水体分析系统</title>
   <style>
-    body { 
-      margin: 0; 
-      padding: 0; 
-      font-family: 'Arial', sans-serif;
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
     }
-    #map-container {
-      position: relative;
-      height: 100vh;
+    #map {
+      height: 70vh;
       width: 100%;
-    }
-    #status-panel {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255, 255, 255, 0.9);
-      padding: 10px 20px;
-      border-radius: 5px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-      z-index: 1000;
-      max-width: 80%;
-      text-align: center;
     }
     #control-panel {
-      position: absolute;
-      top: 60px;
-      left: 10px;
-      background: rgba(255, 255, 255, 0.8);
+      padding: 15px;
+      background: #f5f5f5;
+      border-bottom: 1px solid #ddd;
+    }
+    #status-panel {
       padding: 10px;
-      border-radius: 5px;
-      z-index: 1000;
-      width: 300px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      margin: 10px;
+      border-radius: 4px;
+    }
+    .error {
+      background: #ffebee !important;
+      color: #d32f2f !important;
     }
     button {
-      padding: 8px 12px;
-      margin: 5px 0;
-      width: 100%;
+      padding: 8px 16px;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 4px;
       cursor: pointer;
     }
-    #chart-container {
-      position: absolute;
-      bottom: 20px;
+    button:hover {
+      background: #1765cc;
+    }
+    #debug-panel {
+      position: fixed;
+      bottom: 10px;
       left: 10px;
-      right: 10px;
-      height: 200px;
       background: white;
-      z-index: 1000;
-      border-radius: 5px;
       padding: 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      border: 1px solid #ccc;
+      z-index: 1000;
+      max-height: 200px;
+      overflow-y: auto;
+      width: 300px;
     }
   </style>
 </head>
 <body>
-  <div id="map-container">
+  <div id="control-panel">
+    <h1>鄱阳湖水体分析</h1>
     <div id="status-panel">正在初始化系统...</div>
-    <div id="control-panel">
-      <h3>鄱阳湖水体分析</h3>
-      <button id="analyze-btn">运行季节性分析</button>
-      <div id="date-range">时间范围: 2020-2021</div>
-    </div>
-    <div id="chart-container"></div>
-    <div id="map"></div>
+    <button id="analyze-btn">运行季节性分析</button>
+    <select id="year-range">
+      <option value="2020-2021" selected>2020-2021</option>
+      <option value="2018-2020">2018-2020</option>
+    </select>
+  </div>
+  
+  <div id="map"></div>
+  <canvas id="chart-container" height="200" style="padding: 20px;"></canvas>
+  
+  <div id="debug-panel">
+    <h3>调试信息</h3>
+    <div id="debug-log"></div>
   </div>
 
   <!-- 加载必要的库 -->
   <script src="https://code.earthengine.google.com/ee_api_install.js"></script>
   <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="app.js"></script>
+
+  <script>
+    // 全局变量
+    let map;
+    let chart;
+    const START_YEAR = 2020;
+    const END_YEAR = 2021;
+
+    // 调试函数
+    function debugLog(message) {
+      const logElement = document.getElementById('debug-log');
+      logElement.innerHTML += `<p>${new Date().toLocaleTimeString()}: ${message}</p>`;
+      logElement.scrollTop = logElement.scrollHeight;
+    }
+
+    // 主初始化函数
+    function init() {
+      debugLog("开始初始化系统");
+      updateStatus("正在加载Earth Engine...");
+      
+      ee.initialize(
+        null,
+        null,
+        () => {
+          debugLog("GEE初始化成功");
+          updateStatus("正在初始化地图...");
+          initMap();
+          initControls();
+        },
+        (error) => {
+          debugLog(`GEE初始化错误: ${error.message}`);
+          if (error.message.includes('Not logged in')) {
+            showAuthButton();
+          } else {
+            updateStatus(`初始化失败: ${error.message}`, true);
+          }
+        },
+        { timeout: 15000 }
+      );
+    }
+
+    // 初始化地图
+    function initMap() {
+      try {
+        debugLog("开始初始化地图");
+        map = new google.maps.Map(document.getElementById('map'), {
+          center: { lat: 28.6, lng: 115.8 },
+          zoom: 8,
+          mapTypeId: 'hybrid'
+        });
+        
+        loadBaseLayers();
+        updateStatus("准备就绪");
+        debugLog("地图初始化完成");
+        
+      } catch (error) {
+        debugLog(`地图初始化错误: ${error.stack}`);
+        updateStatus(`地图初始化错误: ${error.message}`, true);
+      }
+    }
+
+    // 加载基础图层
+    function loadBaseLayers() {
+      try {
+        debugLog("开始加载基础图层");
+        const region = ee.Geometry.Rectangle([115, 28, 117, 29]);
+        
+        // Sentinel-2影像
+        const s2Image = ee.ImageCollection('COPERNICUS/S2_SR')
+          .filterBounds(region)
+          .filterDate(`${START_YEAR}-01-01`, `${END_YEAR}-12-31`)
+          .median()
+          .clip(region);
+        
+        // 水体掩膜
+        const waterMask = calculateWaterMask(s2Image);
+        
+        // 添加到地图
+        addEELayerToMap(s2Image, { bands: ['B4', 'B3', 'B2'], min: 0, max: 3000 }, 'Sentinel-2影像');
+        addEELayerToMap(waterMask, { palette: ['blue'] }, '水体掩膜');
+        
+        debugLog("基础图层加载完成");
+      } catch (error) {
+        debugLog(`图层加载错误: ${error.stack}`);
+        throw error;
+      }
+    }
+
+    // 计算水体掩膜
+    function calculateWaterMask(image) {
+      const ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');
+      const mndwi = image.normalizedDifference(['B3', 'B11']).rename('MNDWI');
+      const ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+      const evi = image.expression(
+        '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+          'NIR': image.select('B8'),
+          'RED': image.select('B4'),
+          'BLUE': image.select('B2')
+        }).rename('EVI');
+      
+      return image.expression(
+        '((MNDWI > EVI) && (MNDWI > NDVI)) && EVI < 0.1', {
+          'MNDWI': mndwi,
+          'EVI': evi,
+          'NDVI': ndvi
+        }).rename('water');
+    }
+
+    // 添加EE图层到Google地图
+    function addEELayerToMap(image, visParams, name) {
+      image.getMap(visParams, ({ mapid, token }) => {
+        const tileUrl = `https://earthengine.googleapis.com/map/${mapid}/{z}/{x}/{y}?token=${token}`;
+        
+        new google.maps.ImageMapType({
+          getTileUrl: function(coord, zoom) {
+            return tileUrl
+              .replace('{x}', coord.x)
+              .replace('{y}', coord.y)
+              .replace('{z}', zoom);
+          },
+          tileSize: new google.maps.Size(256, 256),
+          name: name
+        });
+      });
+    }
+
+    // 初始化控件
+    function initControls() {
+      try {
+        debugLog("开始初始化控件");
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const yearSelect = document.getElementById('year-range');
+        
+        if (!analyzeBtn || !yearSelect) {
+          throw new Error(`未找到元素: ${!analyzeBtn ? '#analyze-btn ' : ''}${!yearSelect ? '#year-range' : ''}`);
+        }
+        
+        debugLog("控件元素查找成功");
+        
+        // 绑定分析按钮事件
+        analyzeBtn.addEventListener('click', function analyzeHandler() {
+          debugLog("分析按钮点击事件触发");
+          
+          try {
+            const years = yearSelect.value;
+            debugLog(`获取时间范围: ${years}`);
+            
+            updateStatus("正在分析数据...");
+            
+            if (typeof runAnalysis !== 'function') {
+              throw new Error("runAnalysis函数未定义");
+            }
+            
+            runAnalysis(years);
+          } catch (err) {
+            debugLog(`按钮处理错误: ${err.stack}`);
+            updateStatus(`分析失败: ${err.message}`, true);
+          }
+        });
+        
+        debugLog("事件监听器绑定完成");
+        
+        // 事件监听器健康检查
+        setTimeout(() => {
+          const listeners = getEventListeners(analyzeBtn);
+          debugLog(`事件监听器状态: ${listeners?.click?.length || 0}个点击监听器`);
+        }, 100);
+        
+      } catch (err) {
+        debugLog(`控件初始化错误: ${err.stack}`);
+        updateStatus(`界面初始化失败: ${err.message}`, true);
+      }
+    }
+
+    // 运行分析
+    function runAnalysis(yearRange) {
+      debugLog(`开始分析: ${yearRange}`);
+      
+      try {
+        if (!yearRange || !yearRange.includes('-')) {
+          throw new Error("无效的时间范围格式");
+        }
+        
+        const [startYear, endYear] = yearRange.split('-').map(Number);
+        debugLog(`解析年份: ${startYear} 到 ${endYear}`);
+        
+        const region = ee.Geometry.Rectangle([115, 28, 117, 29]);
+        const timeSeries = generateTimeSeries(region, startYear, endYear);
+        
+        processTimeSeriesData(timeSeries);
+        
+      } catch (err) {
+        debugLog(`运行分析错误: ${err.stack}`);
+        updateStatus(`分析错误: ${err.message}`, true);
+      }
+    }
+
+    // 生成时间序列数据
+    function generateTimeSeries(region, startYear, endYear) {
+      debugLog(`生成时间序列: ${startYear}-${endYear}`);
+      
+      const collection = ee.ImageCollection('COPERNICUS/S2_SR')
+        .filterBounds(region)
+        .filterDate(`${startYear}-01-01`, `${endYear}-12-31`)
+        .map(calculateWaterMask);
+        
+      const months = ee.List.sequence(1, 12);
+      const years = ee.List.sequence(startYear, endYear);
+      
+      return ee.ImageCollection.fromImages(
+        years.map(year => {
+          return months.map(month => {
+            const startDate = ee.Date.fromYMD(year, month, 1);
+            const endDate = startDate.advance(1, 'month');
+            
+            return collection
+              .filterDate(startDate, endDate)
+              .mosaic()
+              .set('system:time_start', startDate.millis())
+              .set('year', year)
+              .set('month', month);
+          });
+        }).flatten()
+      );
+    }
+
+    // 处理时间序列数据
+    function processTimeSeriesData(timeSeries) {
+      debugLog("开始处理时间序列数据");
+      
+      timeSeries.aggregate_array('system:time_start').evaluate(
+        dates => {
+          debugLog(`获取到${dates.length}个日期点`);
+          timeSeries.aggregate_array('water').evaluate(
+            values => {
+              debugLog("数据获取完成，开始渲染图表");
+              renderSeasonalChart(dates, values);
+              updateStatus("分析完成");
+            },
+            err => handleError('水体数据获取失败', err)
+          );
+        },
+        err => handleError('时间数据获取失败', err)
+      );
+    }
+
+    // 渲染季节性图表
+    function renderSeasonalChart(dates, values) {
+      try {
+        debugLog("开始渲染图表");
+        const ctx = document.getElementById('chart-container').getContext('2d');
+        
+        if (chart) {
+          chart.destroy();
+        }
+        
+        chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: dates.map(date => new Date(date).toLocaleDateString()),
+            datasets: [{
+              label: '水体覆盖率',
+              data: values,
+              borderColor: 'rgb(75, 192, 192)',
+              tension: 0.1
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              title: {
+                display: true,
+                text: '鄱阳湖水体季节性变化'
+              }
+            },
+            scales: {
+              x: {
+                title: { display: true, text: '日期' }
+              },
+              y: {
+                title: { display: true, text: '水体覆盖率(%)' }
+              }
+            }
+          }
+        });
+        
+        debugLog("图表渲染完成");
+      } catch (err) {
+        handleError('图表渲染错误', err);
+      }
+    }
+
+    // 显示认证按钮
+    function showAuthButton() {
+      debugLog("显示认证按钮");
+      const statusPanel = document.getElementById('status-panel');
+      statusPanel.innerHTML = `
+        <p>需要Earth Engine认证</p>
+        <button id="auth-btn">点击进行认证</button>
+      `;
+      
+      document.getElementById('auth-btn').addEventListener('click', () => {
+        debugLog("启动GEE认证流程");
+        ee.authenticate(
+          () => {
+            debugLog("认证成功，重新加载");
+            location.reload();
+          },
+          error => {
+            debugLog(`认证失败: ${error.message}`);
+            updateStatus(`认证失败: ${error.message}`, true);
+          }
+        );
+      });
+    }
+
+    // 更新状态
+    function updateStatus(message, isError = false) {
+      const statusPanel = document.getElementById('status-panel');
+      statusPanel.textContent = message;
+      statusPanel.className = isError ? 'error' : '';
+      debugLog(`状态更新: ${message}`);
+    }
+
+    // 错误处理
+    function handleError(context, error) {
+      debugLog(`[ERROR] ${context}: ${error.message}`);
+      console.error(error);
+      updateStatus(`${context}: ${error.message}`, true);
+    }
+
+    // 启动应用
+    window.addEventListener('load', init);
+
+    // 暴露调试函数到全局
+    window.debugLog = debugLog;
+  </script>
 </body>
 </html>
