@@ -21,18 +21,18 @@
     }
     #status-panel {
       padding: 10px;
-      background: #e8f5e9;
-      color: #2e7d32;
+      background: #E8F5E9;
+      color: #2E7D32;
       margin: 10px;
       border-radius: 4px;
     }
     .error {
       background: #ffebee !important;
-      color: #d32f2f !important;
+      color: #D32F2F !important;
     }
     button {
       padding: 8px 16px;
-      background: #1a73e8;
+      background: #1A73E8;
       color: white;
       border: none;
       border-radius: 4px;
@@ -47,11 +47,16 @@
       left: 10px;
       background: white;
       padding: 10px;
-      border: 1px solid #ccc;
+      border: 1px solid #CCC;
       z-index: 1000;
       max-height: 200px;
       overflow-y: auto;
       width: 300px;
+    }
+    #chart-container {
+      width: 100%;
+      padding: 20px;
+      box-sizing: border-box;
     }
   </style>
 </head>
@@ -67,7 +72,7 @@
   </div>
   
   <div id="map"></div>
-  <canvas id="chart-container" height="200" style="padding: 20px;"></canvas>
+  <canvas id="chart-container" height="200"></canvas>
   
   <div id="debug-panel">
     <h3>调试信息</h3>
@@ -122,227 +127,136 @@
     // 初始化地图
     function initMap() {
       try {
-        debugLog("开始初始化地图");
         map = new google.maps.Map(document.getElementById('map'), {
-          center: { lat: 28.6, lng: 115.8 },
-          zoom: 8,
+          center: { lat: 29.0, lng: 116.3 }, // 鄱阳湖坐标
+          zoom: 9,
           mapTypeId: 'hybrid'
         });
-        
-        loadBaseLayers();
-        updateStatus("准备就绪");
-        debugLog("地图初始化完成");
-        
-      } catch (error) {
-        debugLog(`地图初始化错误: ${error.stack}`);
-        updateStatus(`地图初始化错误: ${error.message}`, true);
+        debugLog("地图初始化成功");
+        updateStatus("系统准备就绪");
+      } catch (err) {
+        handleError('地图初始化错误', err);
       }
-    }
-
-    // 加载基础图层
-    function loadBaseLayers() {
-      try {
-        debugLog("开始加载基础图层");
-        const region = ee.Geometry.Rectangle([115, 28, 117, 29]);
-        
-        // Sentinel-2影像
-        const s2Image = ee.ImageCollection('COPERNICUS/S2_SR')
-          .filterBounds(region)
-          .filterDate(`${START_YEAR}-01-01`, `${END_YEAR}-12-31`)
-          .median()
-          .clip(region);
-        
-        // 水体掩膜
-        const waterMask = calculateWaterMask(s2Image);
-        
-        // 添加到地图
-        addEELayerToMap(s2Image, { bands: ['B4', 'B3', 'B2'], min: 0, max: 3000 }, 'Sentinel-2影像');
-        addEELayerToMap(waterMask, { palette: ['blue'] }, '水体掩膜');
-        
-        debugLog("基础图层加载完成");
-      } catch (error) {
-        debugLog(`图层加载错误: ${error.stack}`);
-        throw error;
-      }
-    }
-
-    // 计算水体掩膜
-    function calculateWaterMask(image) {
-      const ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');
-      const mndwi = image.normalizedDifference(['B3', 'B11']).rename('MNDWI');
-      const ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
-      const evi = image.expression(
-        '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
-          'NIR': image.select('B8'),
-          'RED': image.select('B4'),
-          'BLUE': image.select('B2')
-        }).rename('EVI');
-      
-      return image.expression(
-        '((MNDWI > EVI) && (MNDWI > NDVI)) && EVI < 0.1', {
-          'MNDWI': mndwi,
-          'EVI': evi,
-          'NDVI': ndvi
-        }).rename('water');
-    }
-
-    // 添加EE图层到Google地图
-    function addEELayerToMap(image, visParams, name) {
-      image.getMap(visParams, ({ mapid, token }) => {
-        const tileUrl = `https://earthengine.googleapis.com/map/${mapid}/{z}/{x}/{y}?token=${token}`;
-        
-        new google.maps.ImageMapType({
-          getTileUrl: function(coord, zoom) {
-            return tileUrl
-              .replace('{x}', coord.x)
-              .replace('{y}', coord.y)
-              .replace('{z}', zoom);
-          },
-          tileSize: new google.maps.Size(256, 256),
-          name: name
-        });
-      });
     }
 
     // 初始化控件
     function initControls() {
-      try {
-        debugLog("开始初始化控件");
-        const analyzeBtn = document.getElementById('analyze-btn');
-        const yearSelect = document.getElementById('year-range');
-        
-        if (!analyzeBtn || !yearSelect) {
-          throw new Error(`未找到元素: ${!analyzeBtn ? '#analyze-btn ' : ''}${!yearSelect ? '#year-range' : ''}`);
-        }
-        
-        debugLog("控件元素查找成功");
-        
-        // 绑定分析按钮事件
-        analyzeBtn.addEventListener('click', function analyzeHandler() {
-          debugLog("分析按钮点击事件触发");
-          
-          try {
-            const years = yearSelect.value;
-            debugLog(`获取时间范围: ${years}`);
-            
-            updateStatus("正在分析数据...");
-            
-            if (typeof runAnalysis !== 'function') {
-              throw new Error("runAnalysis函数未定义");
-            }
-            
-            runAnalysis(years);
-          } catch (err) {
-            debugLog(`按钮处理错误: ${err.stack}`);
-            updateStatus(`分析失败: ${err.message}`, true);
-          }
-        });
-        
-        debugLog("事件监听器绑定完成");
-        
-        // 事件监听器健康检查
-        setTimeout(() => {
-          const listeners = getEventListeners(analyzeBtn);
-          debugLog(`事件监听器状态: ${listeners?.click?.length || 0}个点击监听器`);
-        }, 100);
-        
-      } catch (err) {
-        debugLog(`控件初始化错误: ${err.stack}`);
-        updateStatus(`界面初始化失败: ${err.message}`, true);
-      }
+      document.getElementById('analyze-btn').addEventListener('click', runAnalysis);
+      debugLog("控件初始化完成");
     }
 
     // 运行分析
-    function runAnalysis(yearRange) {
-      debugLog(`开始分析: ${yearRange}`);
-      
+    function runAnalysis() {
       try {
-        if (!yearRange || !yearRange.includes('-')) {
-          throw new Error("无效的时间范围格式");
-        }
+        debugLog("开始水体分析");
+        updateStatus("正在分析水体...");
         
+        const yearRange = document.getElementById('year-range').value;
         const [startYear, endYear] = yearRange.split('-').map(Number);
-        debugLog(`解析年份: ${startYear} 到 ${endYear}`);
         
-        const region = ee.Geometry.Rectangle([115, 28, 117, 29]);
-        const timeSeries = generateTimeSeries(region, startYear, endYear);
+        // 定义鄱阳湖区域
+        const poyangLake = ee.Geometry.Polygon([
+          [115.8, 29.6], [116.8, 29.6], [116.8, 28.6], [115.8, 28.6]
+        ]);
         
-        processTimeSeriesData(timeSeries);
+        // 获取Landsat影像
+        const collection = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+          .filterBounds(poyangLake)
+          .filterDate(ee.Date.fromYMD(startYear, 1, 1), ee.Date.fromYMD(endYear, 12, 31))
+          .filter(ee.Filter.lt('CLOUD_COVER', 20));
         
+        // 计算季节性变化
+        calculateSeasonalChanges(collection, poyangLake);
       } catch (err) {
-        debugLog(`运行分析错误: ${err.stack}`);
-        updateStatus(`分析错误: ${err.message}`, true);
+        handleError('分析过程中出错', err);
       }
     }
 
-    // 生成时间序列数据
-    function generateTimeSeries(region, startYear, endYear) {
-      debugLog(`生成时间序列: ${startYear}-${endYear}`);
-      
-      const collection = ee.ImageCollection('COPERNICUS/S2_SR')
-        .filterBounds(region)
-        .filterDate(`${startYear}-01-01`, `${endYear}-12-31`)
-        .map(calculateWaterMask);
-        
-      const months = ee.List.sequence(1, 12);
-      const years = ee.List.sequence(startYear, endYear);
-      
-      return ee.ImageCollection.fromImages(
-        years.map(year => {
-          return months.map(month => {
-            const startDate = ee.Date.fromYMD(year, month, 1);
-            const endDate = startDate.advance(1, 'month');
-            
-            return collection
-              .filterDate(startDate, endDate)
-              .mosaic()
-              .set('system:time_start', startDate.millis())
-              .set('year', year)
-              .set('month', month);
-          });
-        }).flatten()
-      );
-    }
-
-    // 处理时间序列数据
-    function processTimeSeriesData(timeSeries) {
-      debugLog("开始处理时间序列数据");
-      
-      timeSeries.aggregate_array('system:time_start').evaluate(
-        dates => {
-          debugLog(`获取到${dates.length}个日期点`);
-          timeSeries.aggregate_array('water').evaluate(
-            values => {
-              debugLog("数据获取完成，开始渲染图表");
-              renderSeasonalChart(dates, values);
-              updateStatus("分析完成");
-            },
-            err => handleError('水体数据获取失败', err)
-          );
-        },
-        err => handleError('时间数据获取失败', err)
-      );
-    }
-
-    // 渲染季节性图表
-    function renderSeasonalChart(dates, values) {
+    // 计算季节性变化
+    function calculateSeasonalChanges(collection, region) {
       try {
-        debugLog("开始渲染图表");
+        debugLog("计算季节性水体变化");
+        
+        // 按月份分组
+        const monthlyGroups = ee.List.sequence(1, 12).map(function(month) {
+          month = ee.Number(month);
+          return collection.filter(ee.Filter.calendarRange(month, month, 'month'))
+            .median()
+            .set('month', month);
+        });
+        
+        // 计算每月水体面积
+        const monthlyStats = monthlyGroups.map(function(image) {
+          const ndwi = image.normalizedDifference(['B3', 'B5']);
+          const water = ndwi.gt(0.2);
+          const area = water.multiply(ee.Image.pixelArea()).reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: region,
+            scale: 30,
+            maxPixels: 1e12
+          }).get('nd');
+          
+          return ee.Feature(null, {
+            month: image.get('month'),
+            area: area
+          });
+        });
+        
+        // 获取数据
+        ee.data.computeFeatures({
+          expression: monthlyStats,
+          callback: function(features) {
+            try {
+              const data = features.map(f => ({
+                month: f.properties.month,
+                area: f.properties.area / 1000000 // 转换为平方公里
+              }));
+              
+              renderChart(data);
+              debugLog("季节性分析完成");
+              updateStatus("分析完成");
+            } catch (err) {
+              handleError('数据处理错误', err);
+            }
+          }
+        });
+      } catch (err) {
+        handleError('季节性分析错误', err);
+      }
+    }
+
+    // 渲染图表
+    function renderChart(data) {
+      try {
+        debugLog("渲染图表");
+        
         const ctx = document.getElementById('chart-container').getContext('2d');
         
+        // 如果已有图表，先销毁
         if (chart) {
           chart.destroy();
         }
         
+        // 准备图表数据
+        const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+        const areaData = new Array(12).fill(0);
+        
+        data.forEach(item => {
+          areaData[item.month - 1] = item.area;
+        });
+        
+        // 创建新图表
         chart = new Chart(ctx, {
           type: 'line',
           data: {
-            labels: dates.map(date => new Date(date).toLocaleDateString()),
+            labels: months,
             datasets: [{
-              label: '水体覆盖率',
-              data: values,
-              borderColor: 'rgb(75, 192, 192)',
-              tension: 0.1
+              label: '水体面积(平方公里)',
+              data: areaData,
+              borderColor: '#4285F4',
+              backgroundColor: 'rgba(66, 133, 244, 0.1)',
+              fill: true,
+              tension: 0.3
             }]
           },
           options: {
@@ -355,10 +269,10 @@
             },
             scales: {
               x: {
-                title: { display: true, text: '日期' }
+                title: { display: true, text: '月份' }
               },
               y: {
-                title: { display: true, text: '水体覆盖率(%)' }
+                title: { display: true, text: '水体面积(平方公里)' }
               }
             }
           }
@@ -381,7 +295,7 @@
       
       document.getElementById('auth-btn').addEventListener('click', () => {
         debugLog("启动GEE认证流程");
-        ee.authenticate(
+        ee.data.authenticateViaPopup(
           () => {
             debugLog("认证成功，重新加载");
             location.reload();
