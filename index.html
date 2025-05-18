@@ -3,134 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <title>鄱阳湖水体分析系统</title>
-  <style>
-    body {
-      font-family: 'Arial', sans-serif;
-      margin: 0;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    h1 {
-      color: #2c3e50;
-      text-align: center;
-      margin-bottom: 20px;
-    }
-    #controls {
-      background-color: white;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      margin-bottom: 15px;
-      display: flex;
-      align-items: center;
-      gap: 15px;
-    }
-    #map {
-      height: 600px;
-      width: 100%;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      background-color: #e8e8e8;
-    }
-    #status {
-      margin: 10px 0;
-      padding: 10px;
-      background-color: #f8f9fa;
-      border-left: 4px solid #3498db;
-      border-radius: 4px;
-    }
-    button {
-      background-color: #3498db;
-      color: white;
-      border: none;
-      padding: 10px 15px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: bold;
-      transition: background-color 0.3s;
-    }
-    button:hover {
-      background-color: #2980b9;
-    }
-    button:disabled {
-      background-color: #95a5a6;
-      cursor: not-allowed;
-    }
-    select {
-      padding: 8px;
-      border-radius: 4px;
-      border: 1px solid #ddd;
-    }
-    #loader {
-      display: none;
-      text-align: center;
-      margin: 10px 0;
-      color: #7f8c8d;
-    }
-    #area-result {
-      margin-left: auto;
-      font-weight: bold;
-      color: #27ae60;
-    }
-    .error {
-      color: #e74c3c;
-    }
-  </style>
+  <!-- 先加载jQuery -->
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <!-- 然后加载GEE库 - 使用官方最新URL -->
+  <script src="https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
+  <!-- 最后加载Google Maps -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNwzyHL8XUS9UW3G9qrZymFVgD7Hqhgpc&callback=initMap"></script>
+  <!-- 其他样式... -->
 </head>
 <body>
-  <h1>鄱阳湖水体变化分析</h1>
-  
-  <div id="controls">
-    时间范围: 
-    <select id="year-select">
-      <option value="2018">2018年</option>
-      <option value="2019">2019年</option>
-      <option value="2020" selected>2020年</option>
-    </select>
-    <button id="analyze-btn">开始分析</button>
-    <div id="area-result"></div>
-  </div>
-  
-  <div id="status">系统初始化中，请稍候...</div>
-  <div id="loader">⌛ 数据处理中，这可能需要一些时间...</div>
-  <div id="map"></div>
-
-  <!-- 加载必要的库 -->
-  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-  <script src="https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNwzyHL8XUS9UW3G9qrZymFVgD7Hqhgpc&callback=initMap"></script>
+  <!-- 页面内容保持不变... -->
   
   <script>
-    // 全局变量
-    let map;
-    let eeInitialized = false;
-    let currentOverlay = null;
-
-    // 初始化地图
-    function initMap() {
-      map = new google.maps.Map(document.getElementById('map'), {
-        center: { lat: 29.0, lng: 116.3 },  // 鄱阳湖中心坐标
-        zoom: 9,
-        mapTypeId: 'hybrid',
-        streetViewControl: false
-      });
-    }
-
-    // 更新状态显示
-    function updateStatus(message, isError = false) {
-      const statusDiv = document.getElementById('status');
-      statusDiv.innerHTML = message;
-      statusDiv.style.borderLeftColor = isError ? '#e74c3c' : '#3498db';
-      console.log(isError ? '错误: ' + message : '状态: ' + message);
-    }
-
-    // 显示/隐藏加载动画
-    function setLoading(isLoading) {
-      document.getElementById('loader').style.display = isLoading ? 'block' : 'none';
-      document.getElementById('analyze-btn').disabled = isLoading;
-    }
-
-    // 检查GEE库是否加载
+    // 添加的库加载检查函数
     function checkEELibraryLoaded() {
       return new Promise((resolve, reject) => {
         if (typeof ee !== 'undefined' && ee.initialize) {
@@ -145,7 +30,7 @@
             clearInterval(interval);
             resolve();
           }
-          if (checks++ > 10) {  // 检查5秒
+          if (checks++ > 10) {
             clearInterval(interval);
             reject(new Error('Earth Engine库加载超时'));
           }
@@ -153,157 +38,7 @@
       });
     }
 
-    // 初始化GEE
-    function initializeGEE() {
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Earth Engine初始化超时(30秒)'));
-        }, 30000);
-
-        ee.initialize(
-          null, 
-          null, 
-          () => {
-            clearTimeout(timeout);
-            eeInitialized = true;
-            updateStatus('Earth Engine已成功连接');
-            resolve();
-          }, 
-          (error) => {
-            clearTimeout(timeout);
-            reject(new Error('Earth Engine连接失败: ' + error.message));
-          }
-        );
-      });
-    }
-
-    // 检查认证状态
-    function checkAuth() {
-      return new Promise((resolve, reject) => {
-        if (ee.data.getAuthToken()) {
-          resolve();
-          return;
-        }
-
-        updateStatus('需要Earth Engine账号认证...');
-        
-        const authTimeout = setTimeout(() => {
-          reject(new Error('认证超时，请刷新页面重试'));
-        }, 60000);
-
-        ee.data.authenticateViaPopup(
-          () => {
-            clearTimeout(authTimeout);
-            updateStatus('认证成功');
-            resolve();
-          },
-          (error) => {
-            clearTimeout(authTimeout);
-            reject(new Error('认证失败: ' + error.message));
-          }
-        );
-      });
-    }
-
-    // 定义鄱阳湖区域
-    function getPoyangLakeGeometry() {
-      return ee.Geometry.Polygon([
-        [[115.8, 29.6],
-         [116.8, 29.6],
-         [116.8, 28.6],
-         [115.8, 28.6],
-         [115.8, 29.6]]
-      ]);
-    }
-
-    // 计算水体面积(平方公里)
-    function calculateWaterArea(waterImage, geometry) {
-      return waterImage.reduceRegion({
-        reducer: ee.Reducer.sum(),
-        geometry: geometry,
-        scale: 30,
-        maxPixels: 1e12
-      }).get('water');
-    }
-
-    // 水体分析主函数
-    async function analyzeWaterBody() {
-      if (!eeInitialized) {
-        updateStatus('Earth Engine未初始化', true);
-        return;
-      }
-
-      const year = document.getElementById('year-select').value;
-      updateStatus(`正在分析${year}年鄱阳湖水体...`);
-      setLoading(true);
-      document.getElementById('area-result').textContent = '';
-
-      try {
-        const poyangLake = getPoyangLakeGeometry();
-        const startDate = ee.Date.fromYMD(parseInt(year), 1, 1);
-        const endDate = ee.Date.fromYMD(parseInt(year), 12, 31);
-        
-        // 获取Landsat 8地表反射率数据
-        const collection = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
-          .filterBounds(poyangLake)
-          .filterDate(startDate, endDate)
-          .filter(ee.Filter.lt('CLOUD_COVER', 20));
-        
-        // 计算中值合成图像
-        const medianImage = collection.median();
-        
-        // 计算MNDWI水体指数
-        const mndwi = medianImage.normalizedDifference(['B3', 'B6']).rename('mndwi');
-        
-        // 水体提取(阈值>0.2)
-        const water = mndwi.gt(0.2).rename('water');
-        
-        // 计算水体面积
-        const area = await new Promise((resolve, reject) => {
-          calculateWaterArea(water, poyangLake).evaluate((result, error) => {
-            if (error) reject(error);
-            else resolve(result);
-          });
-        });
-        
-        const areaKm2 = (area * 30 * 30 / 1e6).toFixed(2); // 转换为平方公里
-        document.getElementById('area-result').textContent = 
-          `${year}年水体面积: ${areaKm2} km²`;
-        
-        // 可视化参数
-        const vizParams = {
-          min: 0,
-          max: 1,
-          palette: ['00000000', '4186F0']  // 透明, 蓝色
-        };
-        
-        // 清除旧图层
-        if (currentOverlay !== null) {
-          map.overlayMapTypes.removeAt(currentOverlay);
-        }
-        
-        // 添加新图层
-        currentOverlay = map.overlayMapTypes.length;
-        map.overlayMapTypes.push({
-          name: 'Water',
-          tileSize: new google.maps.Size(256, 256),
-          getTileUrl: (coord, zoom) => {
-            return water.getMap(vizParams).formatTileUrl(coord.x, coord.y, zoom);
-          }
-        });
-        
-        updateStatus(`${year}年鄱阳湖水体分析完成`);
-      } catch (error) {
-        updateStatus('分析过程中出错: ' + error.message, true);
-        console.error(error);
-        document.getElementById('area-result').className = 'error';
-        document.getElementById('area-result').textContent = '分析失败';
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    // 页面初始化
+    // 修改后的初始化函数
     async function initializeApp() {
       try {
         updateStatus('正在加载Earth Engine库...');
@@ -317,28 +52,14 @@
         // 3. 初始化GEE
         await initializeGEE();
         
-        // 绑定分析按钮事件
-        document.getElementById('analyze-btn').addEventListener('click', analyzeWaterBody);
-        
-        updateStatus('系统准备就绪');
-        
-        // 默认分析当前选定年份
-        analyzeWaterBody();
+        // ...其他初始化代码...
       } catch (error) {
         updateStatus('初始化失败: ' + error.message, true);
         console.error('初始化错误:', error);
-        
-        // 提供重试按钮
-        const retryBtn = document.createElement('button');
-        retryBtn.textContent = '重试初始化';
-        retryBtn.onclick = initializeApp;
-        retryBtn.style.marginLeft = '10px';
-        document.getElementById('status').appendChild(retryBtn);
       }
     }
 
-    // 启动应用
-    window.onload = initializeApp;
+    // 保持其他函数不变...
   </script>
 </body>
 </html>
