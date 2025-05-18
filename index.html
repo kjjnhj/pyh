@@ -3,63 +3,91 @@
 <head>
   <meta charset="UTF-8">
   <title>鄱阳湖水体分析系统</title>
-  <!-- 先加载jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-  <!-- 然后加载GEE库 - 使用官方最新URL -->
+  <!-- 主GEE库URL -->
   <script src="https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
-  <!-- 最后加载Google Maps -->
+  <!-- Google Maps API -->
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNwzyHL8XUS9UW3G9qrZymFVgD7Hqhgpc&callback=initMap"></script>
-  <!-- 其他样式... -->
+  <style>
+    /* 保持原有样式不变 */
+  </style>
 </head>
 <body>
-  <!-- 页面内容保持不变... -->
-  
-  <script>
-    // 添加的库加载检查函数
-    function checkEELibraryLoaded() {
-      return new Promise((resolve, reject) => {
-        if (typeof ee !== 'undefined' && ee.initialize) {
-          resolve();
-          return;
-        }
+  <!-- 保持原有HTML结构不变 -->
 
-        // 设置超时检查
-        let checks = 0;
-        const interval = setInterval(() => {
-          if (typeof ee !== 'undefined' && ee.initialize) {
-            clearInterval(interval);
-            resolve();
+  <script>
+    // 增强版库加载函数
+    function loadEELibraryWithRetry() {
+      return new Promise((resolve, reject) => {
+        const urls = [
+          'https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js',
+          'https://earthengine.googleapis.com/v1alpha/projects/earthengine-legacy/static/js/ee_api_js.js'
+        ];
+        
+        let currentTry = 0;
+        
+        function tryLoad() {
+          if (currentTry >= urls.length) {
+            reject(new Error('无法加载GEE库'));
+            return;
           }
-          if (checks++ > 10) {
-            clearInterval(interval);
-            reject(new Error('Earth Engine库加载超时'));
-          }
-        }, 500);
+          
+          const url = urls[currentTry++];
+          const script = document.createElement('script');
+          script.src = url;
+          
+          script.onload = () => {
+            if (typeof ee !== 'undefined') {
+              resolve();
+            } else {
+              document.head.removeChild(script);
+              tryLoad();
+            }
+          };
+          
+          script.onerror = () => {
+            document.head.removeChild(script);
+            tryLoad();
+          };
+          
+          document.head.appendChild(script);
+        }
+        
+        tryLoad();
       });
     }
 
     // 修改后的初始化函数
     async function initializeApp() {
       try {
-        updateStatus('正在加载Earth Engine库...');
+        updateStatus('正在连接Earth Engine服务...');
         
-        // 1. 确保GEE库已加载
-        await checkEELibraryLoaded();
+        // 尝试加载GEE库
+        await loadEELibraryWithRetry();
         
-        // 2. 检查认证
-        await checkAuth();
+        // 检查认证
+        if (!ee.data.getAuthToken()) {
+          updateStatus('需要Earth Engine认证...');
+          await new Promise((resolve, reject) => {
+            ee.data.authenticateViaPopup(resolve, reject);
+          });
+        }
         
-        // 3. 初始化GEE
-        await initializeGEE();
+        // 初始化GEE
+        await new Promise((resolve, reject) => {
+          ee.initialize(null, null, resolve, reject);
+        });
         
-        // ...其他初始化代码...
+        updateStatus('系统准备就绪');
+        
       } catch (error) {
         updateStatus('初始化失败: ' + error.message, true);
-        console.error('初始化错误:', error);
+        console.error(error);
       }
     }
 
-    // 保持其他函数不变...
+    // 启动应用
+    window.onload = initializeApp;
   </script>
 </body>
 </html>
