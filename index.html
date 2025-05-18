@@ -52,6 +52,10 @@
     button:hover {
       background-color: #2980b9;
     }
+    button:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
     select {
       padding: 8px;
       border-radius: 4px;
@@ -62,6 +66,14 @@
       text-align: center;
       margin: 10px 0;
       color: #7f8c8d;
+    }
+    #area-result {
+      margin-left: auto;
+      font-weight: bold;
+      color: #27ae60;
+    }
+    .error {
+      color: #e74c3c;
     }
   </style>
 </head>
@@ -76,7 +88,7 @@
       <option value="2020" selected>2020年</option>
     </select>
     <button id="analyze-btn">开始分析</button>
-    <div id="area-result" style="margin-left: auto; font-weight: bold;"></div>
+    <div id="area-result"></div>
   </div>
   
   <div id="status">系统初始化中，请稍候...</div>
@@ -85,7 +97,7 @@
 
   <!-- 加载必要的库 -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-  <script src="https://earthengine.googleapis.com/v1alpha/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
+  <script src="https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNwzyHL8XUS9UW3G9qrZymFVgD7Hqhgpc&callback=initMap"></script>
   
   <script>
@@ -99,7 +111,7 @@
       map = new google.maps.Map(document.getElementById('map'), {
         center: { lat: 29.0, lng: 116.3 },  // 鄱阳湖中心坐标
         zoom: 9,
-        mapTypeId: 'hybrid',  // 使用卫星混合地图
+        mapTypeId: 'hybrid',
         streetViewControl: false
       });
     }
@@ -118,23 +130,48 @@
       document.getElementById('analyze-btn').disabled = isLoading;
     }
 
-    // 初始化GEE
-    function initializeGEE() {
+    // 检查GEE库是否加载
+    function checkEELibraryLoaded() {
       return new Promise((resolve, reject) => {
-        if (typeof ee === 'undefined') {
-          reject(new Error('Earth Engine API未加载成功'));
+        if (typeof ee !== 'undefined' && ee.initialize) {
+          resolve();
           return;
         }
 
-        ee.initialize(null, null, 
+        // 设置超时检查
+        let checks = 0;
+        const interval = setInterval(() => {
+          if (typeof ee !== 'undefined' && ee.initialize) {
+            clearInterval(interval);
+            resolve();
+          }
+          if (checks++ > 10) {  // 检查5秒
+            clearInterval(interval);
+            reject(new Error('Earth Engine库加载超时'));
+          }
+        }, 500);
+      });
+    }
+
+    // 初始化GEE
+    function initializeGEE() {
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Earth Engine初始化超时(30秒)'));
+        }, 30000);
+
+        ee.initialize(
+          null, 
+          null, 
           () => {
+            clearTimeout(timeout);
             eeInitialized = true;
             updateStatus('Earth Engine已成功连接');
             resolve();
           }, 
           (error) => {
-            updateStatus('Earth Engine连接失败: ' + error.message, true);
-            reject(error);
+            clearTimeout(timeout);
+            reject(new Error('Earth Engine连接失败: ' + error.message));
           }
         );
       });
@@ -142,21 +179,29 @@
 
     // 检查认证状态
     function checkAuth() {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         if (ee.data.getAuthToken()) {
           resolve();
-        } else {
-          updateStatus('需要Earth Engine账号认证...');
-          ee.data.authenticateViaPopup(
-            () => {
-              updateStatus('认证成功');
-              resolve();
-            },
-            (error) => {
-              updateStatus('认证失败: ' + error.message, true);
-            }
-          );
+          return;
         }
+
+        updateStatus('需要Earth Engine账号认证...');
+        
+        const authTimeout = setTimeout(() => {
+          reject(new Error('认证超时，请刷新页面重试'));
+        }, 60000);
+
+        ee.data.authenticateViaPopup(
+          () => {
+            clearTimeout(authTimeout);
+            updateStatus('认证成功');
+            resolve();
+          },
+          (error) => {
+            clearTimeout(authTimeout);
+            reject(new Error('认证失败: ' + error.message));
+          }
+        );
       });
     }
 
@@ -191,6 +236,7 @@
       const year = document.getElementById('year-select').value;
       updateStatus(`正在分析${year}年鄱阳湖水体...`);
       setLoading(true);
+      document.getElementById('area-result').textContent = '';
 
       try {
         const poyangLake = getPoyangLakeGeometry();
@@ -232,7 +278,7 @@
         };
         
         // 清除旧图层
-        if (currentOverlay) {
+        if (currentOverlay !== null) {
           map.overlayMapTypes.removeAt(currentOverlay);
         }
         
@@ -250,6 +296,8 @@
       } catch (error) {
         updateStatus('分析过程中出错: ' + error.message, true);
         console.error(error);
+        document.getElementById('area-result').className = 'error';
+        document.getElementById('area-result').textContent = '分析失败';
       } finally {
         setLoading(false);
       }
@@ -258,17 +306,34 @@
     // 页面初始化
     async function initializeApp() {
       try {
+        updateStatus('正在加载Earth Engine库...');
+        
+        // 1. 确保GEE库已加载
+        await checkEELibraryLoaded();
+        
+        // 2. 检查认证
         await checkAuth();
+        
+        // 3. 初始化GEE
         await initializeGEE();
         
         // 绑定分析按钮事件
         document.getElementById('analyze-btn').addEventListener('click', analyzeWaterBody);
         
+        updateStatus('系统准备就绪');
+        
         // 默认分析当前选定年份
         analyzeWaterBody();
       } catch (error) {
-        updateStatus('系统初始化失败: ' + error.message, true);
-        console.error(error);
+        updateStatus('初始化失败: ' + error.message, true);
+        console.error('初始化错误:', error);
+        
+        // 提供重试按钮
+        const retryBtn = document.createElement('button');
+        retryBtn.textContent = '重试初始化';
+        retryBtn.onclick = initializeApp;
+        retryBtn.style.marginLeft = '10px';
+        document.getElementById('status').appendChild(retryBtn);
       }
     }
 
