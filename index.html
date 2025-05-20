@@ -1,93 +1,352 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>鄱阳湖水体分析系统</title>
+  
+  <!-- 引入Leaflet地图库 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  
+  <!-- 引入Chart.js图表库 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <!-- 引入jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-  <!-- 主GEE库URL -->
-  <script src="https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js"></script>
-  <!-- Google Maps API -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNwzyHL8XUS9UW3G9qrZymFVgD7Hqhgpc&callback=initMap"></script>
+  
   <style>
-    /* 保持原有样式不变 */
+    body {
+      font-family: 'Microsoft YaHei', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .content {
+      display: flex;
+      flex: 1;
+      gap: 20px;
+    }
+    
+    .map-container {
+      flex: 2;
+      height: 100%;
+      min-height: 400px;
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    #map {
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+    }
+    
+    .chart-container {
+      flex: 1;
+      background-color: #fff;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    #water-chart {
+      width: 100%;
+      height: 100%;
+    }
+    
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding: 15px;
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    select, button {
+      padding: 8px 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+      font-size: 14px;
+    }
+    
+    button {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    
+    button:hover {
+      background-color: #3367d6;
+    }
+    
+    #status {
+      padding: 10px;
+      margin-top: 10px;
+      border-radius: 4px;
+      text-align: center;
+    }
+    
+    .status-info {
+      background-color: #e8f0fe;
+      color: #1967d2;
+    }
+    
+    .status-error {
+      background-color: #fce8e6;
+      color: #d93025;
+    }
+    
+    @media (max-width: 768px) {
+      .content {
+        flex-direction: column;
+      }
+      
+      .map-container, .chart-container {
+        flex: none;
+        height: 400px;
+      }
+    }
   </style>
 </head>
 <body>
-  <!-- 保持原有HTML结构不变 -->
+  <div class="container">
+    <div class="header">
+      <h1>鄱阳湖水体分析系统</h1>
+      <p>基于Google Earth Engine的鄱阳湖水体变化监测与分析</p>
+    </div>
+    
+    <div class="controls">
+      <div class="control-group">
+        <label for="year-range">分析年份:</label>
+        <select id="year-range">
+          <!-- 年份选项将通过JavaScript动态生成 -->
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <button id="analyze-btn">开始分析</button>
+      </div>
+    </div>
+    
+    <div id="status" class="status-info">正在初始化系统...</div>
+    
+    <div class="content">
+      <div class="map-container">
+        <div id="map"></div>
+      </div>
+      
+      <div class="chart-container">
+        <canvas id="water-chart"></canvas>
+      </div>
+    </div>
+  </div>
 
+  <!-- 主应用脚本 -->
   <script>
-    // 增强版库加载函数
-    function loadEELibraryWithRetry() {
+    // 全局变量
+    let map;
+    let chart;
+    let eeInitialized = false;
+    let eeAuthAttempted = false;
+
+    // 增强版GEE库加载函数
+    function loadEELibrary() {
       return new Promise((resolve, reject) => {
-        const urls = [
-          'https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js',
-          'https://earthengine.googleapis.com/v1alpha/projects/earthengine-legacy/static/js/ee_api_js.js'
-        ];
-        
-        let currentTry = 0;
-        
-        function tryLoad() {
-          if (currentTry >= urls.length) {
-            reject(new Error('无法加载GEE库'));
-            return;
-          }
-          
-          const url = urls[currentTry++];
-          const script = document.createElement('script');
-          script.src = url;
-          
-          script.onload = () => {
-            if (typeof ee !== 'undefined') {
-              resolve();
-            } else {
-              document.head.removeChild(script);
-              tryLoad();
-            }
-          };
-          
-          script.onerror = () => {
-            document.head.removeChild(script);
-            tryLoad();
-          };
-          
-          document.head.appendChild(script);
+        if (typeof ee !== 'undefined') {
+          resolve();
+          return;
         }
+
+        const script = document.createElement('script');
+        script.src = 'https://earthengine.googleapis.com/v1/projects/earthengine-legacy/static/js/ee_api_js.js';
         
-        tryLoad();
+        script.onload = () => {
+          if (typeof ee !== 'undefined') {
+            resolve();
+          } else {
+            reject(new Error('GEE库加载失败'));
+          }
+        };
+        
+        script.onerror = () => {
+          reject(new Error('无法加载GEE库'));
+        };
+        
+        document.head.appendChild(script);
       });
     }
 
-    // 修改后的初始化函数
-    async function initializeApp() {
+    // 初始化地图
+    function initMap() {
       try {
-        updateStatus('正在连接Earth Engine服务...');
+        map = L.map('map').setView([29.0, 116.3], 8);
         
-        // 尝试加载GEE库
-        await loadEELibraryWithRetry();
+        // 添加底图图层
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
         
-        // 检查认证
-        if (!ee.data.getAuthToken()) {
-          updateStatus('需要Earth Engine认证...');
-          await new Promise((resolve, reject) => {
-            ee.data.authenticateViaPopup(resolve, reject);
-          });
+        // 添加Google卫星图层
+        L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+          attribution: 'Google Satellite'
+        }).addTo(map);
+        
+        return true;
+      } catch (error) {
+        updateStatus("地图初始化失败: " + error.message, true);
+        return false;
+      }
+    }
+
+    // 初始化GEE
+    async function initGEE() {
+      try {
+        if (eeInitialized) return true;
+        
+        // 加载GEE库
+        await loadEELibrary();
+        
+        return new Promise((resolve, reject) => {
+          // 检查认证状态
+          if (!ee.data.getAuthToken() && !eeAuthAttempted) {
+            eeAuthAttempted = true;
+            updateStatus("正在进行Earth Engine认证...");
+            
+            ee.data.authenticateViaPopup(() => {
+              ee.initialize(
+                null,
+                null,
+                () => {
+                  eeInitialized = true;
+                  updateStatus("GEE初始化成功");
+                  resolve(true);
+                },
+                (error) => {
+                  updateStatus(`GEE初始化失败: ${error.message}`, true);
+                  reject(error);
+                }
+              );
+            }, (error) => {
+              updateStatus(`认证失败: ${error.message}`, true);
+              reject(error);
+            });
+          } else {
+            ee.initialize(
+              null,
+              null,
+              () => {
+                eeInitialized = true;
+                updateStatus("GEE初始化成功");
+                resolve(true);
+              },
+              (error) => {
+                updateStatus(`GEE初始化失败: ${error.message}`, true);
+                reject(error);
+              }
+            );
+          }
+        });
+      } catch (error) {
+        updateStatus(`GEE初始化错误: ${error.message}`, true);
+        throw error;
+      }
+    }
+
+    // 更新状态显示
+    function updateStatus(message, isError = false) {
+      const statusDiv = document.getElementById('status');
+      if (!statusDiv) return;
+      
+      statusDiv.textContent = message;
+      statusDiv.className = isError ? 'status-error' : 'status-info';
+      
+      if (isError) {
+        console.error(message);
+      } else {
+        console.log(message);
+      }
+    }
+
+    // 初始化年份选择器
+    function initYearSelector() {
+      const yearSelect = document.getElementById('year-range');
+      const currentYear = new Date().getFullYear();
+      
+      // 清空现有选项
+      yearSelect.innerHTML = '';
+      
+      // 添加年份选项
+      for (let year = 2015; year <= currentYear; year++) {
+        const option = document.createElement('option');
+        option.value = `${year}-${year}`;
+        option.textContent = `${year}年`;
+        yearSelect.appendChild(option);
+      }
+      
+      // 设置默认值为最近3年
+      yearSelect.value = `${currentYear-2}-${currentYear}`;
+    }
+
+    // 初始化应用
+    async function initApp() {
+      try {
+        updateStatus("正在初始化系统...");
+        
+        // 初始化地图
+        if (!initMap()) {
+          throw new Error('地图初始化失败');
         }
         
         // 初始化GEE
-        await new Promise((resolve, reject) => {
-          ee.initialize(null, null, resolve, reject);
-        });
+        await initGEE();
         
-        updateStatus('系统准备就绪');
+        // 初始化年份选择器
+        initYearSelector();
+        
+        // 设置分析按钮事件
+        document.getElementById('analyze-btn').addEventListener('click', analyzePoyangLake);
+        
+        updateStatus("系统准备就绪，请选择年份后点击分析按钮");
         
       } catch (error) {
-        updateStatus('初始化失败: ' + error.message, true);
-        console.error(error);
+        updateStatus(`初始化失败: ${error.message}`, true);
       }
     }
 
     // 启动应用
-    window.onload = initializeApp;
+    window.addEventListener('load', initApp);
   </script>
+  
+  <!-- 引入应用主逻辑 -->
+  <script src="app.js"></script>
 </body>
 </html>
